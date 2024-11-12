@@ -1,1 +1,327 @@
+--!optimize 2
+--!strict
+--!native
 
+local SimplifyPart = require(script.SimplifyPart)
+local PointToObject = CFrame.identity.PointToObjectSpace
+
+local BIT_RES = 3
+
+local runtime = 0
+local iterations = 0
+
+--had to place all of the shape collision functions below otherwise they wouldnt be inlined :(
+
+local function PointCuboidDistance(cubePos: Vector3, cubeSize: Vector3, pointPos: Vector3): number
+	local halfSize = cubeSize * .5
+
+	local diffX = math.abs(pointPos.X - cubePos.X) - halfSize.X
+	local diffY = math.abs(pointPos.Y - cubePos.Y) - halfSize.Y
+	local diffZ = math.abs(pointPos.Z - cubePos.Z) - halfSize.Z
+
+	return
+		math.max(diffX, 0)^2
+		+ math.max(diffY, 0)^2
+		+ math.max(diffZ, 0)^2
+end
+
+local function PointTransform(partCFrame: CFrame, partSize: Vector3, pointPos: Vector3): Vector3
+	return PointToObject(partCFrame, pointPos) + partSize*.5
+end
+
+local function LineCuboidDistance(cubePos: Vector3, cubeSize: Vector3, lineStart: Vector3, lineDir: Vector3, depth: number): number
+	local A = lineStart
+	local B = lineDir
+
+	local dist1 = PointCuboidDistance(cubePos, cubeSize, A)
+
+	for _ = 1, depth do
+		local dist2 = PointCuboidDistance(cubePos, cubeSize, A + B)
+
+		B *= .5
+		if dist1 > dist2 then
+			A += B
+			dist1 = PointCuboidDistance(cubePos, cubeSize, A)
+		end
+	end
+
+	local dist2 = PointCuboidDistance(cubePos, cubeSize, A + B)
+
+	if dist1 < dist2 then
+		return dist1
+	else
+		return dist2
+	end
+end
+
+local function LineTransform(partCFrame: CFrame, partSize: Vector3, lineStart: Vector3, lineEnd: Vector3, depth: number): (Vector3, Vector3, number)
+	local partHalfSize = partSize*.5
+
+	local transformedStart, transformedEnd = PointToObject(partCFrame, lineStart, lineEnd)
+	local lineStartRelative = transformedStart + partHalfSize
+	local lineDirRelative = transformedEnd + partHalfSize - lineStartRelative
+
+	return
+		lineStartRelative,
+		lineDirRelative,
+		depth
+end
+
+--
+
+local function DestroyBits(edgeParts: any, bitParts: any)
+	for _, part in edgeParts do
+		part:Destroy()
+	end
+
+	for _, part in bitParts do
+		part:Destroy()
+	end
+end
+
+local function BitDestruction(rootCFrame: CFrame, rootSize: Vector3, partRef: Part, bitParent: Instance, bitRes: number, radiusSqrd: number, CollisionFunc, ...): any
+	local sizeFull = (rootSize // bitRes) + Vector3.one
+
+	local sizeX = sizeFull.X
+	local sizeY = sizeFull.Y
+	local sizeZ = sizeFull.Z
+	local sizeXY = sizeX*sizeY
+	
+	local bitSize = rootSize / sizeFull
+	
+	local bitSizeX = bitSize.X
+	local bitSizeY = bitSize.Y
+	local bitSizeZ = bitSize.Z
+
+	local minBound = rootCFrame * CFrame.new((bitSize - rootSize)*.5)
+	local reserved = buffer.create(sizeXY*sizeZ)
+	local bitParts = {}
+	local bitPartCount = 0
+
+	--
+
+	for Z = 0, sizeZ-1 do
+		local Zindex = (Z * sizeXY)
+
+		for Y = 0, sizeY-1 do
+			local YZindex = (Y * sizeX) + Zindex
+
+			for X = 0, sizeX-1 do
+				local startIndex = X + YZindex
+
+				--point check
+				if buffer.readu8(reserved, startIndex) == 1 or CollisionFunc(Vector3.new(X,Y,Z) * bitSize, bitSize, ...) <= radiusSqrd then
+					continue
+				end
+				--
+
+				local maxX, maxY, maxZ = 1,1,1
+
+				--X check
+				local clock = os.clock()
+				
+				local partEndCount = sizeX-X-1
+				local longPointSize = Vector3.new(bitSizeX * 4, bitSizeY, bitSizeZ)
+				
+				for x = 1, partEndCount-4, 4 do
+					if buffer.readu32(reserved, startIndex+x) > 0 or CollisionFunc(Vector3.new(X+x+1.5,Y,Z) * bitSize, longPointSize, ...) <= radiusSqrd then
+						break
+					end
+
+					maxX += 4
+				end
+				
+				for x = maxX, partEndCount do
+					if buffer.readu8(reserved, startIndex+x) == 1 or CollisionFunc(Vector3.new(X+x,Y,Z) * bitSize, bitSize, ...) <= radiusSqrd then
+						break
+					end
+
+					maxX += 1
+				end
+				
+				runtime += os.clock() - clock
+				
+				buffer.fill(reserved, startIndex, 1, maxX)
+				--
+
+				local lastX = maxX-1
+				local lastXNearest4 = lastX // 4 * 4
+				local lastXMinus4 = lastX - 4
+				local XOffset = X+(lastX)*.5
+
+				--Y check
+				local partEndCount = sizeY-Y-1
+				local lineSize = Vector3.new(bitSizeX * maxX, bitSizeY, bitSizeZ)
+				
+				for y = 1, partEndCount do
+					if CollisionFunc(Vector3.new(XOffset,Y+y,Z) * bitSize, lineSize, ...) <= radiusSqrd then
+						break
+					end
+
+					local exit
+					local currYIndex = startIndex + (y * sizeX)
+					
+					for x = 0, lastXMinus4, 4 do
+						if buffer.readu32(reserved, currYIndex+x) > 0 then
+							exit = true
+							break
+						end
+					end
+					
+					if exit then
+						break
+					end
+					
+					for x = lastXNearest4, lastX do
+						if buffer.readu8(reserved, currYIndex+x) == 1 then
+							exit = true
+							break
+						end
+					end
+					
+					if exit then
+						break
+					end
+
+					maxY += 1
+					buffer.fill(reserved, currYIndex, 1, maxX)
+				end
+				--
+
+				local lastY = maxY-1
+				local YOffset = Y+(lastY)*.5
+
+				--Z check
+				local partEndCount = sizeZ-Z-1
+				local planeSize = Vector3.new(bitSizeX * maxX, bitSizeY * maxY, bitSizeZ)
+				
+				for z = 1, partEndCount do
+					if CollisionFunc(Vector3.new(XOffset,YOffset,Z+z) * bitSize, planeSize, ...) <= radiusSqrd then
+						break
+					end
+
+					local exit
+					local currZIndex = startIndex + (z * sizeXY)
+					
+					for y = 0, lastY do
+						local currYZIndex = currZIndex + (y * sizeX)
+
+						for x = 0, lastX do
+							if buffer.readu8(reserved, currYZIndex+x) == 1 then
+								exit = true
+								break
+							end
+						end
+
+						if exit then
+							break
+						end
+					end
+
+					if exit then
+						break
+					end
+
+					maxZ += 1
+					for y = 0, lastY do
+						buffer.fill(reserved, currZIndex + (y * sizeX), 1, maxX)
+					end
+				end
+				--
+
+				local bitPart = partRef:Clone()
+				bitPart.CFrame = minBound * CFrame.new(Vector3.new(XOffset, YOffset, Z+(maxZ-1)*.5) * bitSize)
+				bitPart.Size = Vector3.new(maxX, maxY, maxZ) * bitSize
+				bitPart.Parent = bitParent
+
+				bitPartCount += 1
+				bitParts[bitPartCount] = bitPart
+			end
+		end
+	end
+	
+	print(bitPartCount)
+	print(runtime)
+
+	return bitParts
+end
+
+local function DestroyPart(rootPart: Part, bitRes: number, regrowTime: number?, radius: number, BBCenter: Vector3, BBExtents: Vector3, CollisionFunc: (...any) -> number, TransformFunc, ...)
+	local rootSize = rootPart.Size
+	local radiusSqrd = radius^2
+
+	local rootParent = rootPart.Parent
+
+	if not rootParent or CollisionFunc(rootSize*.5, rootSize, TransformFunc(rootPart.CFrame, rootSize, ...)) > radiusSqrd then --parent and edge case check
+		return
+	end
+
+	local partRef = rootPart:Clone()
+	for _, child in partRef:GetChildren() do
+		if child.ClassName ~= "Texture" then
+			child:Destroy()
+		end
+	end
+
+	local newRootCF, newRootSize, edgeParts = SimplifyPart(partRef, rootParent, BBCenter, BBExtents)
+
+	local bitParts = BitDestruction(newRootCF, newRootSize, partRef, rootParent, bitRes, radiusSqrd, CollisionFunc,
+		TransformFunc(newRootCF, newRootSize, ...)
+	)
+
+	if not regrowTime then
+		rootPart:Destroy()
+		return
+	end
+	
+	rootPart.Parent = nil
+
+	local connection: RBXScriptConnection
+
+	local thread = task.delay(regrowTime, function()
+		connection:Disconnect()
+		DestroyBits(edgeParts, bitParts)
+		rootPart.Parent = rootParent
+	end)
+
+	connection = rootParent.Destroying:Connect(function()
+		coroutine.close(thread)
+	end)
+end
+
+--
+
+local module = {}
+
+--Intersect a block part with a sphere.
+function module.SubtractPoint(part: Part, regrowTime: number?, radius: number, pointPos: Vector3)
+	local radiusExtended = radius + BIT_RES
+	local BBExtents = Vector3.new(radiusExtended,radiusExtended,radiusExtended)
+
+	DestroyPart(part, BIT_RES, regrowTime, radius, pointPos, BBExtents, PointCuboidDistance, PointTransform,
+		pointPos
+	)
+end
+
+--Intersect a block part with a capsule of a specified accuracy.
+function module.SubtractLine(part: Part, regrowTime: number?, radius: number, lineStart: Vector3, lineEnd: Vector3, depth: number)
+	local radiusExtended = radius + BIT_RES
+	local lineCenter = lineStart + (lineEnd - lineStart) * .5
+
+	local transformedStart, transformedEnd = PointToObject(part.CFrame, lineStart, lineEnd)
+	local diff = (transformedStart - transformedEnd) * .5
+
+	local BBExtents = Vector3.new(
+		math.abs(diff.X) + radiusExtended,
+		math.abs(diff.Y) + radiusExtended,
+		math.abs(diff.Z) + radiusExtended
+	)
+
+	DestroyPart(part, BIT_RES, regrowTime, radius, lineCenter, BBExtents, LineCuboidDistance, LineTransform,
+		lineStart,
+		lineEnd,
+		depth
+	)
+end
+
+return module
