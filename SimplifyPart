@@ -1,0 +1,101 @@
+--!native
+--!optimize 2
+
+return function(partRef: Part, rootParent: Instance, BBCenter: Vector3, BBExtents: Vector3): (CFrame, Vector3, any)
+	local extentX = BBExtents.X
+	local extentY = BBExtents.Y
+	local extentZ = BBExtents.Z
+
+	local rootSize = partRef.Size
+	local xSize = rootSize.X
+	local ySize = rootSize.Y
+	local zSize = rootSize.Z
+
+	local originalCF = partRef.CFrame * CFrame.new(rootSize*-.5)
+	local transformedCenter = originalCF:PointToObjectSpace(BBCenter)
+	local xPos = transformedCenter.X
+	local yPos = transformedCenter.Y
+	local zPos = transformedCenter.Z
+
+	local edgeParts = {}
+	local edgePartCount = 0
+
+	local function NewPart(cf: CFrame, size: Vector3): Part
+		local part = partRef:Clone()
+		part.CFrame = cf
+		part.Size = size
+		part.Parent = rootParent
+
+		return part
+	end
+
+	--
+
+	local xPlusOffset = math.clamp(xPos - extentX, 0, xSize)
+	if xPlusOffset > 0 then --extend on the positive X
+		edgePartCount += 1
+		edgeParts[edgePartCount] = NewPart(
+			originalCF * CFrame.new(xPlusOffset*.5, ySize*.5, zSize*.5),
+			Vector3.new(xPlusOffset, ySize, zSize)
+		)
+	end
+
+	local xNegOffset = math.clamp(xSize - xPos - extentX, 0, xSize)
+	if xNegOffset > 0 then --extend on the negative X
+		edgePartCount += 1
+		edgeParts[edgePartCount] = NewPart(
+			originalCF * CFrame.new(xSize - xNegOffset*.5, ySize*.5, zSize*.5),
+			Vector3.new(xNegOffset, ySize, zSize)
+		)
+	end
+
+	local xDiff = (xSize - xNegOffset) - xPlusOffset
+	local xPosClamped = xPlusOffset + xDiff * .5
+
+	local yPlusOffset = math.clamp(yPos - extentY, 0, ySize)
+	if yPlusOffset > 0 then
+		edgePartCount += 1
+		edgeParts[edgePartCount] = NewPart(
+			originalCF * CFrame.new(xPosClamped, yPlusOffset*.5, zSize*.5),
+			Vector3.new(xDiff, yPlusOffset, zSize)
+		)
+	end
+
+	local yNegOffset = math.clamp(ySize - yPos - extentY, 0, ySize)
+	if yNegOffset > 0 then
+		edgePartCount += 1
+		edgeParts[edgePartCount] = NewPart(
+			originalCF * CFrame.new(xPosClamped, ySize - yNegOffset*.5, zSize*.5),
+			Vector3.new(xDiff, yNegOffset, zSize)
+		)
+	end
+
+	local yDiff = (ySize - yNegOffset) - yPlusOffset
+	local yPosClamped = yPlusOffset + yDiff * .5
+
+	local zPlusOffset = math.clamp(zPos - extentZ, 0, zSize)
+	if zPlusOffset > 0 then
+		edgePartCount += 1
+		edgeParts[edgePartCount] = NewPart(
+			originalCF * CFrame.new(xPosClamped, yPosClamped, zPlusOffset*.5),
+			Vector3.new(xDiff, yDiff, zPlusOffset)
+		)
+	end
+
+	local zNegOffset = math.clamp(zSize - zPos - extentZ, 0, zSize)
+	if zNegOffset > 0 then
+		edgePartCount += 1
+		edgeParts[edgePartCount] = NewPart(
+			originalCF * CFrame.new(xPosClamped, yPosClamped, zSize - zNegOffset*.5),
+			Vector3.new(xDiff, yDiff, zNegOffset)
+		)
+	end
+
+	local zDiff = (zSize - zNegOffset) - zPlusOffset
+	local zPosClamped = zPlusOffset + zDiff * .5
+
+	local newRootCF = originalCF * CFrame.new(xPosClamped, yPosClamped, zPosClamped)
+	local newRootSize = Vector3.new(xDiff, yDiff, zDiff)
+
+	return newRootCF, newRootSize, edgeParts
+end
