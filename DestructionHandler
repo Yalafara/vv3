@@ -30,22 +30,22 @@ local function PointTransform(partCFrame: CFrame, partSize: Vector3, pointPos: V
 end
 
 local function LineCuboidDistance(cubePos: Vector3, cubeSize: Vector3, lineStart: Vector3, lineDir: Vector3, depth: number): number
-	local A = lineStart
-	local B = lineDir
+	local low = lineStart
+	local offset = lineDir
 
-	local dist1 = PointCuboidDistance(cubePos, cubeSize, A)
+	local dist1 = PointCuboidDistance(cubePos, cubeSize, low)
 
 	for _ = 1, depth do
-		local dist2 = PointCuboidDistance(cubePos, cubeSize, A + B)
+		local dist2 = PointCuboidDistance(cubePos, cubeSize, low + offset)
 
-		B *= .5
+		offset *= .5
 		if dist1 > dist2 then
-			A += B
-			dist1 = PointCuboidDistance(cubePos, cubeSize, A)
+			low += offset
+			dist1 = PointCuboidDistance(cubePos, cubeSize, low)
 		end
 	end
 
-	local dist2 = PointCuboidDistance(cubePos, cubeSize, A + B)
+	local dist2 = PointCuboidDistance(cubePos, cubeSize, low + offset)
 
 	if dist1 < dist2 then
 		return dist1
@@ -119,24 +119,43 @@ local function BitDestruction(rootCFrame: CFrame, rootSize: Vector3, partRef: Pa
 
 				--X check
 				local clock = os.clock()
-				
+
 				local partEndCount = sizeX-X-1
-				local longPointSize = Vector3.new(bitSizeX * 4, bitSizeY, bitSizeZ)
-				
-				for x = 1, partEndCount-4, 4 do
-					if buffer.readu32(reserved, startIndex+x) > 0 or CollisionFunc(Vector3.new(X+x+1.5,Y,Z) * bitSize, longPointSize, ...) <= radiusSqrd then
-						break
-					end
 
-					maxX += 4
-				end
-				
-				for x = maxX, partEndCount do
-					if buffer.readu8(reserved, startIndex+x) == 1 or CollisionFunc(Vector3.new(X+x,Y,Z) * bitSize, bitSize, ...) <= radiusSqrd then
-						break
-					end
+				if CollisionFunc(Vector3.new(X+(partEndCount*.5),Y,Z) * bitSize, Vector3.new(bitSizeX * sizeX, bitSizeY, bitSizeZ), ...) <= radiusSqrd then
+					local longPointSize = Vector3.new(bitSizeX * 4, bitSizeY, bitSizeZ)
+					
+					for x = 1, partEndCount-4, 4 do
+						if buffer.readu32(reserved, startIndex+x) > 0 or CollisionFunc(Vector3.new(X+x+1.5,Y,Z) * bitSize, longPointSize, ...) <= radiusSqrd then
+							break
+						end
 
-					maxX += 1
+						maxX += 4
+					end
+				
+					for x = maxX, partEndCount do
+						if buffer.readu8(reserved, startIndex+x) == 1 or CollisionFunc(Vector3.new(X+x,Y,Z) * bitSize, bitSize, ...) <= radiusSqrd then
+							break
+						end
+	
+						maxX += 1
+					end
+				else
+					for x = 1, partEndCount-4, 4 do
+						if buffer.readu32(reserved, startIndex+x) > 0 then
+							break
+						end
+
+						maxX += 4
+					end
+				
+					for x = maxX, partEndCount do
+						if buffer.readu8(reserved, startIndex+x) == 1 then
+							break
+						end
+	
+						maxX += 1
+					end
 				end
 				
 				runtime += os.clock() - clock
@@ -147,7 +166,7 @@ local function BitDestruction(rootCFrame: CFrame, rootSize: Vector3, partRef: Pa
 				local lastX = maxX-1
 				local lastXNearest4 = lastX // 4 * 4
 				local lastXMinus4 = lastX - 4
-				local XOffset = X+(lastX)*.5
+				local XOffset = X+(lastX*.5)
 
 				--Y check
 				local partEndCount = sizeY-Y-1
@@ -189,7 +208,7 @@ local function BitDestruction(rootCFrame: CFrame, rootSize: Vector3, partRef: Pa
 				--
 
 				local lastY = maxY-1
-				local YOffset = Y+(lastY)*.5
+				local YOffset = Y+(lastY*.5)
 
 				--Z check
 				local partEndCount = sizeZ-Z-1
@@ -230,7 +249,7 @@ local function BitDestruction(rootCFrame: CFrame, rootSize: Vector3, partRef: Pa
 				--
 
 				local bitPart = partRef:Clone()
-				bitPart.CFrame = minBound * CFrame.new(Vector3.new(XOffset, YOffset, Z+(maxZ-1)*.5) * bitSize)
+				bitPart.CFrame = minBound * CFrame.new(Vector3.new(XOffset, YOffset, Z+((maxZ-1)*.5)) * bitSize)
 				bitPart.Size = Vector3.new(maxX, maxY, maxZ) * bitSize
 				bitPart.Parent = bitParent
 
