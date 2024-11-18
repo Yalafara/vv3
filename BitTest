@@ -1,0 +1,6 @@
+local function FindLowestBit(buff, start, end)
+     local next = bit32.band(x + 7, -8)
+end
+
+local buff = buffer.create(60)
+FindLowestBit(buff, 3, 57)
