@@ -22,7 +22,7 @@ local function FindLowestBit(buff, start, end)
           local currByte = buffer.readu8(buff, currByteIndex)
 
           if currByte ~= 0 then
-               local bitOffset = (currByteIndex - firstByteIndex) * 8 + bit32.rzcount(currByte)
+               local bitOffset = ((currByteIndex - firstByteIndex) * 8 - firstBitIndex) + bit32.rzcount(currByte)
                if currByteIndex == endByteIndex then
                     return math.min(bitOffset, end - start)
                end
