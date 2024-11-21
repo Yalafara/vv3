@@ -2,17 +2,35 @@ local function FindLowestBit(buff, start, end)
      --local next = bit32.band(x + 7, -8)
 
      local firstByteIndex = start//8
-     local endByteIndex = end//8
      local firstBitIndex = start - firstByteIndex*8
+     local endByteIndex = end//8
+
+     --
 
      local firstByte = bit32.rshift(buffer.readu8(buff, firstByteIndex), firstBitIndex)
      local firstSetBitIndex = bit32.rzcount(firstByte)
 
      if firstByteIndex == endByteIndex then
-          return math.min(firstSetBit, 7-firstSetBitIndex)
-     elseif firstSetBit == 32
+          return math.min(firstSetBitIndex, end - endByteIndex*8)
+     elseif firstSetBitIndex ~= 32 then
+          return firstSetBitIndex
+     end
+
+     --
      
+     for currByteIndex = firstByteIndex + 1, endByteIndex do
+          local currByte = buffer.readu8(buff, currByteIndex)
+
+          if currByte ~= 0 then
+               local bitOffset = (currByteIndex - firstByteIndex) * 8 + bit32.rzcount(currByte)
+               if currByteIndex == endByteIndex then
+                    return math.min(bitOffset, end - start)
+               end
+               return bitOffset
+          end
+     end
      
+     return end - start
 end
 
 local buff = buffer.create(60)
